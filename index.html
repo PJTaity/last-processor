@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>LAST PROCESSOR: TOTALITY</title>
+<style>
+    :root { --neon: #0ff; --danger: #f00; --gold: #ff0; --purple: #b0f; }
+    html,body{ margin:0; padding:0; background:#000; overflow:hidden; font-family:'Courier New', monospace; color:#fff; }
+    canvas{display:block; cursor: crosshair;}
+    
+    h1, h2 { color: var(--neon); text-transform: uppercase; letter-spacing: 5px; text-shadow: 0 0 15px var(--neon); text-align: center; margin: 10px;}
+    .overlay { position:fixed; inset:0; background:rgba(0,0,0,0.95); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:100; backdrop-filter: blur(10px); }
+    .menu-card { background: #111; border: 2px solid var(--neon); padding: 20px; width: 480px; max-height: 85vh; overflow-y: auto; text-align: center; box-shadow: 0 0 20px rgba(0,255,255,0.2);}
+
+    /* PIXEL GRID */
+    #grid { display: grid; grid-template-columns: repeat(16, 15px); gap: 1px; background: #333; border: 2px solid var(--neon); margin: 10px auto; width: 256px;}
+    .pixel { width: 15px; height: 15px; background: #000; cursor: pointer; border: 0.1px solid #111; }
+
+    button { background: transparent; border: 1px solid var(--neon); color: var(--neon); padding: 12px; margin: 5px 0; cursor: pointer; width: 100%; font-weight: bold; text-transform: uppercase; transition: 0.2s; }
+    button:hover { background: var(--neon); color: #000; box-shadow: 0 0 15px var(--neon); }
+    
+    .diff-easy { border-left: 10px solid #0f0 !important; }
+    .diff-med { border-left: 10px solid #ff0 !important; }
+    .diff-hard { border-left: 10px solid #f00 !important; }
+
+    #ui-layer { position: fixed; top: 10px; left: 10px; pointer-events: none; z-index: 10; }
+    .bar { width: 200px; height: 12px; border: 1px solid #fff; background: #222; margin-bottom: 5px; }
+    #hp-fill { height: 100%; background: var(--danger); box-shadow: 0 0 10px var(--danger); transition: 0.3s; }
+    #weapon-status { position: fixed; bottom: 20px; left: 20px; color: var(--neon); font-size: 14px; text-shadow: 0 0 5px var(--neon); }
+</style>
+</head>
+<body>
+
+<div id="loginScreen" class="overlay">
+    <h1>CORE INITIALIZE</h1>
+    <div class="menu-card">
+        <input type="text" id="username" placeholder="IDENT NAME" style="width:90%; padding:10px; background:#000; border:1px solid var(--neon); color:#fff; text-align:center;">
+        <button onclick="auth()">SYNC BIO-LINK</button>
+    </div>
+</div>
+
+<div id="skinEditor" class="overlay" style="display:none">
+    <h2>CHASSIS DESIGN (16x16)</h2>
+    <div class="menu-card">
+        <input type="color" id="colorPicker" value="#00ffff" style="width:100%; height:40px; border:none; background:none; cursor:pointer;">
+        <div id="grid"></div>
+        <button onclick="saveSkin()">UPLOAD CONFIG TO CORE</button>
+    </div>
+</div>
+
+<div id="mainMenu" class="overlay" style="display:none">
+    <h1>LAST PROCESSOR</h1>
+    <div class="menu-card">
+        <p id="statsDisplay" style="color:var(--gold);"></p>
+        <button class="diff-easy" onclick="startGame('easy')">EASY: STABLE SYSTEM</button>
+        <button class="diff-med" onclick="startGame('medium')">MEDIUM: VOLATILE CORE</button>
+        <button class="diff-hard" onclick="startGame('hard')">HARD: CRITICAL FAILURE</button>
+        <button onclick="openShop()">HARDWARE & GACHA SHOP</button>
+        <button onclick="document.getElementById('skinEditor').style.display='flex'">RE-DESIGN CHASSIS</button>
+    </div>
+</div>
+
+<div id="shopScreen" class="overlay" style="display:none">
+    <h2>ARMORY / GACHA</h2>
+    <div class="menu-card">
+        <p>CURRENT SHARDS: <span id="shardCountShop" style="color:var(--gold)">0</span></p>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <button onclick="buyStat('hp')">MAX HP+ (50)</button>
+            <button onclick="buyStat('speed')">SPD+ (50)</button>
+            <button onclick="buySkill('vamp')">VAMPIRISM (200)</button>
+            <button onclick="buySkill('shield')">KINETIC SHIELD (200)</button>
+        </div>
+        <hr style="border:0.5px solid var(--neon); margin:15px 0;">
+        <button onclick="rollHat()" style="background:var(--purple); color:#fff; border:none;">ROLL AI GACHA HAT (75)</button>
+        <p id="currentHatText" style="font-size:12px; margin-top:10px; color:var(--gold)"></p>
+        <button onclick="document.getElementById('shopScreen').style.display='none'" style="margin-top:10px; background:#333;">EXIT SHOP</button>
+    </div>
+</div>
+
+<div id="ui-layer">
+    <div id="waveDisplay" style="font-size:24px; font-weight:bold;">WAVE 1</div>
+    <div class="bar"><div id="hp-fill"></div></div>
+    <div id="shardDisplay">SHARDS: 0</div>
+</div>
+<div id="weapon-status">WPN: PISTOL LVL 1</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+/** ENGINE DATA & GACHA CONSTANTS **/
+const HAT_TYPES = ["CROWN", "HALO", "HORNS", "ANTENNA", "ORBS"];
+const ADJECTIVES = ["NEON", "VOID", "PLASMA", "CYBER", "GLITCHED"];
+
+let user = { 
+    name: "", shards: 0, best: 0, 
+    skin: Array(256).fill("#000"), 
+    maxHp: 100, speed: 4.5, 
+    skills: [], hat: null 
+};
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let game = null, gameActive = false, keys = {}, mouse = {x:0, y:0, down:false}, frame = 0;
+
+// Setup Pixel Drawing Grid
+const grid = document.getElementById('grid');
+for(let i=0; i<256; i++) {
+    const p = document.createElement('div'); p.className = 'pixel';
+    p.onmousedown = () => p.style.background = document.getElementById('colorPicker').value;
+    p.onmouseover = (e) => { if(e.buttons === 1) p.style.background = document.getElementById('colorPicker').value; };
+    grid.appendChild(p);
+}
+
+function auth() {
+    user.name = document.getElementById('username').value || "OPERATOR";
+    const saved = localStorage.getItem('LP_TOTALITY_' + user.name);
+    if(saved) {
+        user = JSON.parse(saved);
+        const pixels = document.querySelectorAll('.pixel');
+        user.skin.forEach((c, i) => pixels[i].style.background = c);
+    }
+    showMenu();
+}
+
+function saveSkin() {
+    user.skin = [...document.querySelectorAll('.pixel')].map(p => p.style.background || "#000");
+    save(); showMenu();
+}
+
+function showMenu() {
+    document.querySelectorAll('.overlay').forEach(o => o.style.display = 'none');
+    document.getElementById('mainMenu').style.display = 'flex';
+    document.getElementById('statsDisplay').innerText = `SHARDS: ${user.shards} | BEST WAVE: ${user.best}`;
+}
+
+function openShop() {
+    document.getElementById('shopScreen').style.display = 'flex';
+    document.getElementById('shardCountShop').innerText = user.shards;
+    document.getElementById('currentHatText').innerText = user.hat ? "EQUIPPED: " + user.hat.name : "NO HAT";
+}
+
+function buyStat(t) {
+    if(user.shards >= 50) { 
+        user.shards -= 50; 
+        if(t==='hp') user.maxHp += 20; else user.speed += 0.5; 
+        save(); openShop(); 
+    }
+}
+
+function buySkill(s) {
+    if(user.shards >= 200 && !user.skills.includes(s)) { 
+        user.shards -= 200; user.skills.push(s); save(); openShop(); 
+    }
+}
+
+function rollHat() {
+    if(user.shards >= 75) {
+        user.shards -= 75;
+        const type = HAT_TYPES[Math.floor(Math.random()*HAT_TYPES.length)];
+        user.hat = { 
+            name: `${ADJECTIVES[Math.floor(Math.random()*5)]} ${type}`, 
+            color: `hsl(${Math.random()*360}, 100%, 50%)`, 
+            type: type 
+        };
+        save(); openShop();
+    }
+}
+
+function save() { localStorage.setItem('LP_TOTALITY_' + user.name, JSON.stringify(user)); }
+
+/** GAMEPLAY ENGINE **/
+window.onresize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+window.onresize();
+document.onkeydown = e => keys[e.key.toLowerCase()] = true;
+document.onkeyup = e => keys[e.key.toLowerCase()] = false;
+document.onmousemove = e => { mouse.x = e.clientX; mouse.y = e.clientY; };
+document.onmousedown = () => mouse.down = true;
+document.onmouseup = () => mouse.down = false;
+
+function startGame(diff) {
+    document.getElementById('mainMenu').style.display = 'none';
+    game = new Engine(diff);
+    gameActive = true;
+    requestAnimationFrame(loop);
+}
+
+class Engine {
+    constructor(diff) {
+        this.diff = diff; 
+        this.hp = user.maxHp; 
+        this.x = canvas.width/2; 
+        this.y = canvas.height/2;
+        this.enemies = []; this.bullets = []; this.items = []; this.wave = 1;
+        this.wpn = 'pistol'; this.lvls = {pistol:1, spread:1, rail:1};
+        this.spawn();
+    }
+    spawn() {
+        // DIFFICULTY SCALING LOGIC
+        let count = this.wave * (this.diff === 'hard' ? 6 : (this.diff === 'medium' ? 3 : 2));
+        for(let i=0; i<count; i++) this.enemies.push(new Enemy(this.wave, this.diff));
+        
+        // Spawn Weapon Crates
+        if(Math.random() > 0.3) {
+            this.items.push({x: Math.random()*canvas.width, y: Math.random()*canvas.height, type: Math.random()>0.5?'spread':'rail'});
+        }
+    }
+    update() {
+        let s = user.speed;
+        if(keys.w) this.y -= s; if(keys.s) this.y += s;
+        if(keys.a) this.x -= s; if(keys.d) this.x += s;
+
+        // Weapon Logic
+        if(mouse.down && frame % 10 === 0) {
+            let a = Math.atan2(mouse.y - this.y, mouse.x - this.x);
+            if(this.wpn === 'pistol') {
+                this.bullets.push({x:this.x, y:this.y, vx:Math.cos(a)*15, vy:Math.sin(a)*15, sz:5});
+            } else if(this.wpn === 'spread') {
+                let bulletCount = 3 + (this.lvls.spread * 2);
+                for(let i=0; i<bulletCount; i++) {
+                    let off = (i - (bulletCount-1)/2) * 0.2;
+                    this.bullets.push({x:this.x, y:this.y, vx:Math.cos(a+off)*12, vy:Math.sin(a+off)*12, sz:4});
+                }
+            } else { // Railgun
+                this.bullets.push({x:this.x, y:this.y, vx:Math.cos(a)*25, vy:Math.sin(a)*25, sz:10+(this.lvls.rail*5)});
+            }
+        }
+
+        // Collision Logic
+        this.bullets.forEach(b => {
+            b.x += b.vx; b.y += b.vy;
+            this.enemies.forEach(e => {
+                if(Math.hypot(b.x-e.x, b.y-e.y) < e.rad) {
+                    e.hp--; b.dead = true;
+                    if(e.hp <= 0 && !e.dead_flag) {
+                        e.dead_flag = true; 
+                        // Reward based on difficulty
+                        let reward = this.diff === 'hard' ? 5 : (this.diff === 'medium' ? 2 : 1);
+                        user.shards += reward;
+                        if(user.skills.includes('vamp')) this.hp = Math.min(user.maxHp, this.hp+1);
+                    }
+                }
+            });
+        });
+
+        this.items.forEach((it, i) => {
+            if(Math.hypot(this.x-it.x, this.y-it.y) < 30) {
+                this.wpn = it.type; this.lvls[it.type]++; this.items.splice(i,1);
+            }
+        });
+
+        this.enemies.forEach(e => {
+            let a = Math.atan2(this.y - e.y, this.x - e.x);
+            e.x += Math.cos(a) * e.spd; e.y += Math.sin(a) * e.spd;
+            if(Math.hypot(this.x-e.x, this.y-e.y) < 25) {
+                let damage = this.diff === 'hard' ? 1.5 : (this.diff === 'medium' ? 1 : 0.5);
+                if(user.skills.includes('shield') && Math.random() > 0.8) damage = 0;
+                this.hp -= damage;
+            }
+        });
+
+        this.bullets = this.bullets.filter(b => !b.dead);
+        this.enemies = this.enemies.filter(e => !e.dead_flag);
+        if(this.enemies.length === 0) { this.wave++; this.spawn(); }
+        if(this.hp <= 0) { 
+            gameActive = false; 
+            if(this.wave > user.best) user.best = this.wave; 
+            save(); showMenu(); 
+        }
+        
+        document.getElementById('weapon-status').innerText = `WPN: ${this.wpn.toUpperCase()} | LVL: ${this.lvls[this.wpn]}`;
+    }
+    draw() {
+        ctx.fillStyle = '#000'; ctx.fillRect(0,0,canvas.width,canvas.height);
+        
+        // Render Hat
+        if(user.hat) {
+            ctx.fillStyle = user.hat.color; ctx.shadowBlur = 15; ctx.shadowColor = user.hat.color;
+            if(user.hat.type === 'HALO') { ctx.beginPath(); ctx.ellipse(this.x, this.y-35, 15, 5, 0, 0, Math.PI*2); ctx.stroke(); }
+            else if(user.hat.type === 'CROWN') { 
+                ctx.beginPath(); ctx.moveTo(this.x-15, this.y-25); ctx.lineTo(this.x-15, this.y-40); ctx.lineTo(this.x-7, this.y-30); ctx.lineTo(this.x, this.y-40); ctx.lineTo(this.x+7, this.y-30); ctx.lineTo(this.x+15, this.y-40); ctx.lineTo(this.x+15, this.y-25); ctx.fill();
+            } else { ctx.fillRect(this.x-5, this.y-45, 10, 10); }
+        }
+
+        // Render Custom Skin
+        ctx.shadowBlur = 0;
+        user.skin.forEach((c, i) => { 
+            ctx.fillStyle = c; 
+            ctx.fillRect(this.x - 20 + (i%16)*2.5, this.y - 20 + Math.floor(i/16)*2.5, 2.5, 2.5); 
+        });
+
+        // Entities
+        this.enemies.forEach(e => {
+            ctx.fillStyle = e.boss ? '#f0f' : '#f00';
+            ctx.font = e.boss ? "40px Arial" : "24px Arial";
+            ctx.fillText(e.boss ? "👾" : "🤖", e.x-12, e.y+12);
+        });
+        
+        ctx.fillStyle = '#fff'; this.bullets.forEach(b => ctx.fillRect(b.x, b.y, b.sz, b.sz));
+        ctx.fillStyle = '#ff0'; this.items.forEach(it => { ctx.shadowBlur=10; ctx.shadowColor='#ff0'; ctx.fillText("📦 "+it.type.toUpperCase(), it.x, it.y); });
+
+        // Update UI
+        document.getElementById('hp-fill').style.width = (this.hp/user.maxHp*100) + "%";
+        document.getElementById('shardDisplay').innerText = "SHARDS: " + user.shards;
+        document.getElementById('waveDisplay').innerText = "WAVE: " + this.wave;
+    }
+}
+
+class Enemy {
+    constructor(w, d) {
+        const side = Math.floor(Math.random()*4);
+        if(side===0){this.x=Math.random()*canvas.width; this.y=-50;}
+        else if(side===1){this.x=Math.random()*canvas.width; this.y=canvas.height+50;}
+        else if(side===2){this.x=-50; this.y=Math.random()*canvas.height;}
+        else {this.x=canvas.width+50; this.y=Math.random()*canvas.height;}
+        
+        this.boss = w % 5 === 0;
+        this.rad = this.boss ? 40 : 20;
+        this.hp = this.boss ? w*10 : (d==='hard'?4: (d==='medium'?2:1));
+        this.spd = (d==='hard'?3.5: (d==='medium'?2.5:1.5)) + Math.random();
+    }
+}
+
+function loop() { if(gameActive) { frame++; game.update(); game.draw(); requestAnimationFrame(loop); } }
+</script>
+</body>
+</html>
