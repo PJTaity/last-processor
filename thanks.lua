@@ -1,0 +1,2 @@
+-- THANKS FOR PLAYING MY GAME :)!!
+-- Have Fun, and be kind!
